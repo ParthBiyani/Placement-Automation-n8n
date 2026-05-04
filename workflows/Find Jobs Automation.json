@@ -1,0 +1,545 @@
+{
+  "name": "My workflow 2",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -912,
+        0
+      ],
+      "id": "9bb15764-2322-4a02-9d9f-895329488169",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.4",
+          "mode": "list",
+          "cachedResultName": "gpt-5.4"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -688,
+        224
+      ],
+      "id": "226a6ad4-40cd-4955-83da-6bb2f0231045",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+          "openAiApi": {}
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolSerpApi",
+      "typeVersion": 1,
+      "position": [
+        -912,
+        336
+      ],
+      "id": "a00ca81d-c5c1-4933-9ac2-fef1148493a1",
+      "name": "SerpAPI1",
+      "credentials": {
+        "serpApi": {
+          "id": "mdLprBF7DhLP86V3",
+          "name": "SerpAPI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Today is {{ $now.toFormat('dd MMMM yyyy') }}.\n\nRun these searches and return job listings as JSON:\n\n1. Search: site:naukri.com/job-listings software engineer fresher India\n2. Search: site:linkedin.com/jobs/view software engineer entry level India\n3. Search: site:internshala.com/internship software development India\n4. Search: site:naukri.com/job-listings internship software 2027 batch\n5. Search: site:linkedin.com/jobs/view intern software India\n\nFor each valid job listing URL found, extract company, role, and create a JSON object.\nReturn ONLY the JSON array, no markdown, no explanation.\n\nBegin now.",
+        "options": {
+          "systemMessage": "You are PlaceRight, a job discovery agent for an Indian engineering student, Batch 2027.\n\n━━━ YOUR ONLY TOOL ━━━\nSerpAPI search. Returns a plain text \"response\" snippet string only.\nNo link fields exist. Extract everything from snippet text.\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\nPHASE 1 — DISCOVER (3 calls)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nCALL 1: fresher software engineer jobs India hiring 2026\nCALL 2: software internship India 2027 batch engineering\nCALL 3: SDE fresher openings India Naukri LinkedIn April 2026\n\nRead all 3 snippets. Pick the 3 BEST company + role pairs you find.\nStop at 3. Do not pick more.\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\nPHASE 2 — ENRICH (1 call per company, 3 calls total)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nFor each of the 3 companies, make exactly ONE call:\n\nQuery: [Company Name] [Role] fresher salary apply India 2026 AmbitionBox\n\nFrom the snippet extract ALL of these in one pass:\n- Salary or stipend figure → package_or_stipend\n- Skills or tech stack → requirements\n- Location → location\n- Any URL, web address, or domain you see anywhere in the snippet text → apply_link\n  Copy it exactly as it appears. Do not modify it. Do not validate it.\n  Even if it looks like a partial URL or just a domain name — copy it.\n  Only set null if there is truly no URL or domain name anywhere in the text.\n- If any other field not found → null\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\nPHASE 3 — OUTPUT (0 calls)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nAfter exactly 6 total calls, immediately return the JSON array.\nDo not make any more calls. Do not verify anything.\nInclude all 3 companies regardless of missing fields.\n\nReturn ONLY a raw JSON array. No markdown. No code fences. No explanation.\n\n[\n  {\n    \"company\": \"company name\",\n    \"role\": \"role title\",\n    \"location\": \"city or Remote or null\",\n    \"package_or_stipend\": \"e.g. 4 LPA or null\",\n    \"requirements\": \"skills or null\",\n    \"apply_link\": \"any URL or domain seen in snippet, copied exactly, or null\",\n    \"posting_date\": \"date or null\",\n    \"is_internship\": true or false,\n    \"source\": \"first 60 chars of Phase 1 snippet this came from\"\n  }\n]"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "de4e9a89-8700-4361-bac7-8e1ea9d26349",
+      "name": "Parse Job Listings"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Parse AI Agent output ────────────────────────────────────────\nlet jobs = [];\nlet parseError = null;\n\ntry {\n  const raw = $('Parse Job Listings').first().json.output ?? '';\n\n  // Guard: empty output\n  if (!raw || raw.trim() === '') {\n    throw new Error('Agent returned empty output. Check SerpAPI quota and OpenAI key.');\n  }\n\n  // Extract JSON array — handles any stray text the agent might add\n  const arrayMatch = raw.match(/\\[[\\s\\S]*\\]/);\n  if (!arrayMatch) {\n    throw new Error('No JSON array in output. Agent said: ' + raw.slice(0, 400));\n  }\n\n  const parsed = JSON.parse(arrayMatch[0]);\n  if (!Array.isArray(parsed)) {\n    throw new Error('Parsed value is not an array.');\n  }\n\n  jobs = parsed;\n\n} catch (e) {\n  parseError = e.message;\n}\n\n// ── If parsing failed, send error report ────────────────────────\nif (parseError || jobs.length === 0) {\n  const agentRaw = $('Parse Job Listings').first().json.output ?? 'No output';\n  const errMsg = parseError ?? 'Agent returned 0 jobs. SerpAPI may have hit quota or returned no results.';\n\n  return [{\n    json: {\n      whatsapp_report: `⚠️ *PlaceRight Error*\\n\\n${errMsg}\\n\\n_Check n8n execution log for details._`,\n      email_subject: 'PlaceRight — Report Failed',\n      email_html: `\n        <div style=\"font-family:Arial,sans-serif;padding:24px\">\n          <h2 style=\"color:#dc2626\">⚠️ PlaceRight Report Failed</h2>\n          <p><strong>Error:</strong> ${errMsg}</p>\n          <h3>Raw Agent Output:</h3>\n          <pre style=\"background:#f3f4f6;padding:16px;border-radius:6px;\n                      font-size:12px;overflow-x:auto\">${agentRaw}</pre>\n        </div>`,\n      total_jobs: 0\n    }\n  }];\n}\n\n// ── Date ─────────────────────────────────────────────────────────\nconst today = new Date().toLocaleDateString('en-IN', {\n  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'\n});\n\nconst totalFound = jobs.length;\nconst displayJobs = jobs.slice(0, 3); // WhatsApp 1600 char limit\n\n// ── WhatsApp report ──────────────────────────────────────────────\nlet wa = `📋 *DAILY PLACEMENT REPORT*\\n`;\nwa += `📅 ${today}\\n`;\nwa += `━━━━━━━━━━━━━━━━━━\\n\\n`;\nwa += `Found *${totalFound}* fresh opening${totalFound !== 1 ? 's' : ''} today\\n`;\nwa += totalFound > 3\n  ? `_(Top 3 below — all ${totalFound} in your email)_\\n\\n`\n  : `\\n`;\n\ndisplayJobs.forEach((job, i) => {\n  const pkg  = job.package_or_stipend || 'Not disclosed';\n  const reqs = (job.requirements || '').slice(0, 80);\n  const hr   = job.linkedin_hr_search_query || '';\n  const link = job.apply_link || '';\n  const date = job.posting_date ? ` • ${job.posting_date}` : '';\n\n  wa += `*${i + 1}. ${job.company}*${date}\\n`;\n  wa += `💼 ${job.role}\\n`;\n  wa += `📍 ${job.location}\\n`;\n  wa += `💰 ${pkg}\\n`;\n  wa += `🛠 ${reqs}…\\n`;\n  if (hr)   wa += `🔍 HR: _\"${hr}\"_ on LinkedIn\\n`;\n  if (link) wa += `🔗 ${link}\\n`;\n  wa += `─────────────────\\n\\n`;\n});\n\nwa += `━━━━━━━━━━━━━━━━━━\\n`;\nwa += `💡 *Tip:* DM the HR on LinkedIn *before* applying — 3× more visibility\\n`;\nwa += `\\n_Sent by PlaceRight • Your AI Placement Copilot_`;\n\n// ── Email HTML ────────────────────────────────────────────────────\nlet emailRows = '';\njobs.forEach((job, i) => {\n  const link = job.apply_link || '#';\n  const pkg  = job.package_or_stipend || '—';\n  const date = job.posting_date || '—';\n  const reqs = (job.requirements || '').slice(0, 80);\n  const hr   = job.linkedin_hr_search_query || '—';\n  const bg1  = i % 2 === 0 ? '#f9fafb' : '#ffffff';\n  const bg2  = i % 2 === 0 ? '#eef2ff' : '#f0fdf4';\n\n  emailRows += `\n    <tr style=\"background:${bg1}\">\n      <td style=\"padding:14px 12px;font-weight:bold;color:#1e1b4b;white-space:nowrap\">\n        ${i + 1}. ${job.company}\n      </td>\n      <td style=\"padding:14px 12px\">${job.role}</td>\n      <td style=\"padding:14px 12px;white-space:nowrap\">${job.location}</td>\n      <td style=\"padding:14px 12px;white-space:nowrap\">${pkg}</td>\n      <td style=\"padding:14px 12px;font-size:12px;color:#374151\">${reqs}…</td>\n      <td style=\"padding:14px 12px;white-space:nowrap;font-size:12px;color:#6b7280\">${date}</td>\n      <td style=\"padding:14px 12px\">\n        <a href=\"${link}\"\n           style=\"background:#4F46E5;color:white;padding:7px 16px;border-radius:4px;\n                  text-decoration:none;font-size:13px;font-weight:bold;white-space:nowrap;\n                  display:inline-block\">\n          Apply →\n        </a>\n      </td>\n    </tr>\n    <tr style=\"background:${bg2}\">\n      <td colspan=\"7\" style=\"padding:8px 12px;font-size:12px;color:#4b5563\">\n        🔍 Find HR on LinkedIn: <em>\"${hr}\"</em>\n      </td>\n    </tr>`;\n});\n\nconst emailHtml = `\n<!DOCTYPE html>\n<html>\n<body style=\"font-family:Arial,sans-serif;max-width:900px;margin:0 auto;\n             color:#1a1a1a;background:#f3f4f6;padding:20px\">\n\n  <div style=\"background:linear-gradient(135deg,#4F46E5,#7C3AED);\n              padding:28px 24px;border-radius:10px 10px 0 0\">\n    <h1 style=\"color:white;margin:0;font-size:24px\">📋 Daily Placement Report</h1>\n    <p style=\"color:#c7d2fe;margin:8px 0 0;font-size:15px\">\n      ${today} &nbsp;•&nbsp;\n      <strong style=\"color:white\">\n        ${totalFound} fresh opening${totalFound !== 1 ? 's' : ''} found\n      </strong>\n    </p>\n  </div>\n\n  <div style=\"background:white;border:1px solid #e5e7eb;border-top:none;\n              border-radius:0 0 10px 10px;overflow:hidden\">\n\n    <div style=\"overflow-x:auto\">\n      <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"\n             style=\"border-collapse:collapse;min-width:720px\">\n        <thead>\n          <tr style=\"background:#3730a3;color:white\">\n            <th style=\"padding:13px 12px;text-align:left\">Company</th>\n            <th style=\"padding:13px 12px;text-align:left\">Role</th>\n            <th style=\"padding:13px 12px;text-align:left\">Location</th>\n            <th style=\"padding:13px 12px;text-align:left\">Package</th>\n            <th style=\"padding:13px 12px;text-align:left\">Key Skills</th>\n            <th style=\"padding:13px 12px;text-align:left\">Posted</th>\n            <th style=\"padding:13px 12px;text-align:left\">Link</th>\n          </tr>\n        </thead>\n        <tbody>${emailRows}</tbody>\n      </table>\n    </div>\n\n    <div style=\"padding:20px 24px;background:#fefce8;border-top:2px solid #fde68a\">\n      <p style=\"margin:0;font-size:14px;color:#92400e\">\n        💡 <strong>Pro Tip:</strong> Message the recruiter on LinkedIn\n        <em>before</em> submitting your application — increases visibility 3× with the hiring team.\n      </p>\n    </div>\n\n    <div style=\"padding:16px;background:#f3f4f6;text-align:center;\n                font-size:12px;color:#9ca3af;border-top:1px solid #e5e7eb\">\n      Sent by <strong>PlaceRight</strong> • Your AI Placement Copilot\n    </div>\n\n  </div>\n</body>\n</html>`;\n\nreturn [{\n  json: {\n    whatsapp_report: wa,\n    email_subject: `📋 PlaceRight — ${totalFound} Fresh Jobs | ${today}`,\n    email_html:    emailHtml,\n    total_jobs:    totalFound\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        0
+      ],
+      "id": "9a5cf35d-1dbd-4bdb-982a-b81b74e4f6d1",
+      "name": "Format Report"
+    },
+    {
+      "parameters": {
+        "from": "whatsapp:+14155238886",
+        "to": "whatsapp:+919891943809",
+        "message": "={{ $('Format Report').first().json.whatsapp_report }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        464,
+        0
+      ],
+      "id": "281c2049-c4b0-4ba7-9076-fc41df01bd70",
+      "name": "Send Whatsapp",
+      "credentials": {
+          "twilioApi": {}
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "google_jobs",
+        "q": "Software Engineer fresher 2027 batch India",
+        "additionalFields": {
+          "hl": "en",
+          "chips": "date_posted:today"
+        },
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-serpapi.serpApi",
+      "typeVersion": 1,
+      "position": [
+        -912,
+        960
+      ],
+      "id": "3c069198-b4f6-4db1-ae0f-234971663cbe",
+      "name": "Find Fresh Jobs",
+      "credentials": {
+        "serpApi": {
+          "id": "mdLprBF7DhLP86V3",
+          "name": "SerpAPI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "q": "{{ $fromAI('query', 'Search query to find fresher job listings on Naukri or LinkedIn') }}",
+        "additionalFields": {},
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-serpapi.serpApiTool",
+      "typeVersion": 1,
+      "position": [
+        -912,
+        752
+      ],
+      "id": "910475fd-4437-4f21-a21a-3e3b09199b40",
+      "name": "Google search in SerpApi",
+      "credentials": {
+        "serpApi": {
+          "id": "mdLprBF7DhLP86V3",
+          "name": "SerpAPI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "=placement_agent_{{ $now.toFormat('yyyy-MM')}}",
+        "contextWindowLength": 5000
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        -560,
+        224
+      ],
+      "id": "68240e5d-2b99-4bc7-b486-58003fa62b7d",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolSerpApi",
+      "typeVersion": 1,
+      "position": [
+        -432,
+        224
+      ],
+      "id": "3781e9d5-5b5f-4ab8-adf0-0abd67f7d0eb",
+      "name": "SerpAPI",
+      "credentials": {
+        "serpApi": {
+          "id": "mdLprBF7DhLP86V3",
+          "name": "SerpAPI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.4-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-5.4-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -912,
+        544
+      ],
+      "id": "970e4ce4-0826-4822-acb9-2a6d5a96245b",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "YqNz73i68T0FXprX",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.output }}",
+        "options": {
+          "systemMessage": "You are LinkFinder, a URL retrieval agent.\n\n━━━ YOUR ONLY TOOL ━━━\nSerpAPI search. Returns a plain text \"response\" snippet string.\nRead every character of the snippet carefully — URLs appear as plain text within it.\n\n━━━ YOUR INPUT ━━━\nYou will receive a JSON array of job listings. Each listing has a \"company\" and \"role\" field.\nYour only job is to find a real apply URL for each one.\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\nPHASE 1 — FIND LINKS (1 call per listing)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nFor each listing in the input array, make exactly ONE search call.\n\nQuery format:\n[company] [role] apply careers India\n\nExample: \"Zepto software engineer apply careers India\"\n\nFrom the snippet, find the best URL using this priority order:\n1. A URL containing \"careers\", \"jobs\", \"apply\", or \"internship\" → best\n2. A URL containing the company name → good\n3. Any other URL or domain name visible in the snippet → acceptable\n4. If truly no URL exists anywhere in the snippet → null\n\nCopy the URL exactly as it appears. Do not modify, shorten, or reconstruct it.\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\nPHASE 2 — OUTPUT (0 calls)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nTake the original input JSON array and return it with apply_link filled in for each listing.\nAll other fields must remain exactly as they were in the input — do not change, remove, or add any field.\nOnly apply_link is updated.\n\nReturn ONLY a raw JSON array. No markdown. No code fences. No explanation. No text before or after.\n\n[\n  {\n    \"company\": \"same as input\",\n    \"role\": \"same as input\",\n    \"location\": \"same as input\",\n    \"package_or_stipend\": \"same as input\",\n    \"requirements\": \"same as input\",\n    \"apply_link\": \"URL found in snippet or null\",\n    \"posting_date\": \"same as input\",\n    \"is_internship\": \"same as input\",\n    \"source\": \"same as input\"\n  }\n]\n\n━━━ HARD RULES ━━━\n- Make exactly as many search calls as there are listings — no more, no less\n- Never invent or guess a URL\n- Never modify any field other than apply_link\n- Output must be valid JSON parseable by JSON.parse()"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -320,
+        928
+      ],
+      "id": "8f032a46-6b49-4496-aeb6-a2eae289b58d",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.4",
+          "mode": "list",
+          "cachedResultName": "gpt-5.4"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -240,
+        752
+      ],
+      "id": "0c9276d8-5a15-4eaf-80ba-d7a965b9ad17",
+      "name": "OpenAI Chat Model2",
+      "credentials": {
+        "openAiApi": {
+          "id": "YqNz73i68T0FXprX",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.output }}",
+        "contextWindowLength": 5000
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        -96,
+        736
+      ],
+      "id": "513fd9ad-4058-4ece-ac0a-8aa411d5cb07",
+      "name": "Simple Memory1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolSerpApi",
+      "typeVersion": 1,
+      "position": [
+        32,
+        736
+      ],
+      "id": "89e0c070-8c41-4cf3-a4db-9107b0e36730",
+      "name": "SerpAPI2",
+      "credentials": {
+        "serpApi": {
+          "id": "mdLprBF7DhLP86V3",
+          "name": "SerpAPI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = JSON.parse($input.first().json.output);\n\nreturn jobs.map((job, i) => ({\n  json: {\n    index: i,\n    query: `${job.company} ${job.role} apply careers India`,\n    original: job\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -288,
+        0
+      ],
+      "id": "ddeae0ab-4b3e-4715-b969-35d71f8ddda7",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "serpApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "name": "api_key",
+              "value": "619d4c110ad9a958b5f4480656dd4b0e82b0d86841f1f6c9c34d778f5ec6c6ce"
+            },
+            {
+              "name": "num",
+              "value": "3"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -80,
+        0
+      ],
+      "id": "7d03cd6b-08c2-4bd2-b2a2-68f349f5a67d",
+      "name": "HTTP Request",
+      "executeOnce": true,
+      "credentials": {
+        "serpApi": {
+          "id": "mdLprBF7DhLP86V3",
+          "name": "SerpAPI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n  const results = item.json.organic_results || [];\n  const original = item.json.original;\n\n  const best = results.find(r =>\n    r.link && (\n      r.link.includes('careers') ||\n      r.link.includes('jobs') ||\n      r.link.includes('apply') ||\n      r.link.includes('internship') ||\n      r.link.includes(original.company.toLowerCase().replace(/\\s+/g, ''))\n    )\n  ) || results[0];\n\n  return {\n    json: {\n      ...original,\n      apply_link: best?.link || null\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        0
+      ],
+      "id": "00c038aa-424f-4811-afb9-ff9f1b460589",
+      "name": "Code in JavaScript1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Job Listings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Parse Job Listings",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Job Listings": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Report": {
+      "main": [
+        [
+          {
+            "node": "Send Whatsapp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Whatsapp": {
+      "main": [
+        []
+      ]
+    },
+    "Find Fresh Jobs": {
+      "main": [
+        []
+      ]
+    },
+    "Google search in SerpApi": {
+      "ai_tool": [
+        []
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Parse Job Listings",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SerpAPI": {
+      "ai_tool": [
+        [
+          {
+            "node": "Parse Job Listings",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        []
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        []
+      ]
+    },
+    "OpenAI Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory1": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SerpAPI2": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Format Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "d691f2d8-4ce0-47fa-bf67-f965c425410e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4ac9d8695bc1edb95571f50809e8e9945ea19c6e18870f222cd32db3143591cf"
+  },
+  "id": "Q3uiCa07vBWxPSfF",
+  "tags": []
+}
